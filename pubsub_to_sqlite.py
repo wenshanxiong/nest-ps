@@ -15,7 +15,7 @@ logger.addHandler(log_handler)
 
 topic_name = 'projects/nest-psp-1739980377792/topics/nest-events'
 subscription_name = 'projects/nest-psp-1739980377792/subscriptions/nest-events-sub'
-pull_timeout_sec = 5
+pull_timeout_sec = 30
 
 def process_message(message):
     """Process a single Pub/Sub message"""
@@ -36,7 +36,6 @@ def process_message(message):
                     timestamp,
                     trait_data
                 )
-            logger.info(f"Event: {event_id}")
             return True
     except Exception as e:
         logger.error(f"Error processing message: {e}")
@@ -49,42 +48,44 @@ def main():
     
     try:
         logger.info(f"Listening for messages on {subscription_name}...")
-        response = subscriber.pull(
-            request={
-                "subscription": subscription_name,
-                "max_messages": 100,
-            },
-            timeout=pull_timeout_sec
-        )
-
-        if not response.received_messages:
-            logger.info("No messages received, continuing...")
-            return
-        
-        ack_ids = []
-        nack_ids = []
-        
-        for received_message in response.received_messages:
-            if process_message(received_message):
-                ack_ids.append(received_message.ack_id)
-            else:
-                nack_ids.append(received_message.ack_id)
-        
-        # Acknowledge processed messages
-        if ack_ids:
-            subscriber.acknowledge(
-                request={"subscription": subscription_name, "ack_ids": ack_ids}
-            )
-        
-        # Nack failed messages
-        if nack_ids:
-            subscriber.modify_ack_deadline(
+        while True:
+            response = subscriber.pull(
                 request={
                     "subscription": subscription_name,
-                    "ack_ids": nack_ids,
-                    "ack_deadline_seconds": 0
-                }
+                    "max_messages": 100,
+                },
+                timeout=pull_timeout_sec
             )
+            
+            if not response.received_messages:
+                logger.info("No messages received, terminating")
+                return
+            
+            ack_ids = []
+            nack_ids = []
+            
+            for received_message in response.received_messages:
+                if process_message(received_message):
+                    ack_ids.append(received_message.ack_id)
+                else:
+                    nack_ids.append(received_message.ack_id)
+            
+            logger.info(f"Acknowledging {len(ack_ids)} messages and nacking {len(nack_ids)} messages")
+            # Acknowledge processed messages
+            if ack_ids:
+                subscriber.acknowledge(
+                    request={"subscription": subscription_name, "ack_ids": ack_ids}
+                )
+            
+            # Nack failed messages
+            if nack_ids:
+                subscriber.modify_ack_deadline(
+                    request={
+                        "subscription": subscription_name,
+                        "ack_ids": nack_ids,
+                        "ack_deadline_seconds": 0
+                    }
+                )
                 
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt, shutting down...")
